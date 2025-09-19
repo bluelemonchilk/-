@@ -8,8 +8,8 @@ from IPython.display import display
 from tqdm import tqdm
 
 # Настройки
-DATA_PATH = 'C:/Users/khari/OneDrive/Документы/Обработка ВСР/'
-RESULTS_PATH = 'C:/Users/khari/OneDrive/Документы/Результаты ВСР/'
+DATA_PATH = ''
+RESULTS_PATH = ''
 SAMPLING_RATE = 250
 REQUIRED_STAGES = ["Струп тест фигуры", "Струп тест черные слова", "Струп тест цвет трен",
     "Этап 1 Офис", "Выбор1", "Струп тест цвет", "Каган тест1",
@@ -18,10 +18,9 @@ REQUIRED_STAGES = ["Струп тест фигуры", "Струп тест че
     "Этап 3 Семейная ссора", "Выбор3", "Струп тест цвет4", "Каган тест4",
     "Нейтральная ситуация", "ВыборН", "Струп тест цвет5", "Каган тест5",
     "Этап 4 Метро", "Выбор4", "Струп тест цвет6", "Каган тест6",
-    "Итоговый фон открытые глаза", "Итоговый фон закрытые глаза"]  # ваш список этапов
+    "Итоговый фон открытые глаза", "Итоговый фон закрытые глаза"]  # Список этапов
 
 def get_data_from_reacor_file(file):
-    """Чтение и извлечение данных из файла реактора (только нужные этапы)"""
     with open(file, 'r', encoding='cp1251') as fd:
         lines = [line.replace(',', '.') for line in fd.readlines()]
 
@@ -120,8 +119,8 @@ def process_signal(signal, signal_type, name, stage, sampling_rate=SAMPLING_RATE
             analysis = nk.ppg_analyze(ppg_processed, sampling_rate=sampling_rate)
         
             result = {
-                #f"ФПГ_{stage}_ЧСС": force_extract(analysis['PPG_Rate_Mean'].iloc[0]),
-                #f"ФПГ_{stage}_ACB": force_extract(mean_amplitude),
+                f"ФПГ_{stage}_ЧСС": force_extract(analysis['PPG_Rate_Mean'].iloc[0]),
+                f"ФПГ_{stage}_ACB": force_extract(mean_amplitude),
             }
             return result
         
@@ -138,68 +137,68 @@ def process_signal(signal, signal_type, name, stage, sampling_rate=SAMPLING_RATE
             
             hrv_freq = nk.hrv_frequency(peaks=rpeaks, sampling_rate=sampling_rate, normalize=False, psd_method='welch', show=False)
             
-            #try:
+            #Часть, которая очень долго вычисляется#
+            try:
                 # Используем очищенный сигнал ЭКГ для расчета энтропии
-                #cleaned_signal = ecg_processed['ECG_Clean'].values
+                cleaned_signal = ecg_processed['ECG_Clean'].values
                 
                 # Определяем оптимальные параметры для sample entropy
-                #delay_result = nk.complexity_delay(cleaned_signal, delay_max=50, method='fraser1986', show=False, silent=True)
-                #delay = int(delay_result[0]) if isinstance(delay_result, tuple) else int(delay_result)
+                delay_result = nk.complexity_delay(cleaned_signal, delay_max=50, method='fraser1986', show=False, silent=True)
+                delay = int(delay_result[0]) if isinstance(delay_result, tuple) else int(delay_result)
                 
-                #dimension_result = nk.complexity_dimension(cleaned_signal, delay=delay, dimension_max=10, method='afnn', show=False)
-                #dimension = int(dimension_result[0]) if isinstance(dimension_result, tuple) else int(dimension_result)
+                dimension_result = nk.complexity_dimension(cleaned_signal, delay=delay, dimension_max=10, method='afnn', show=False)
+                dimension = int(dimension_result[0]) if isinstance(dimension_result, tuple) else int(dimension_result)
                 
-                #tolerance_result = nk.complexity_tolerance(cleaned_signal, method='maxApEn', delay=delay, dimension=dimension, show=False)
-                #tolerance = float(tolerance_result[0]) if isinstance(tolerance_result, tuple) else float(tolerance_result)
+                tolerance_result = nk.complexity_tolerance(cleaned_signal, method='maxApEn', delay=delay, dimension=dimension, show=False)
+                tolerance = float(tolerance_result[0]) if isinstance(tolerance_result, tuple) else float(tolerance_result)
                 
                 # Вычисляем sample entropy
-                #sampen_result = nk.entropy_sample(
-                #    cleaned_signal, 
-                #    delay=delay, 
-                #    dimension=dimension, 
-                #    tolerance=tolerance
-                #)
+                sampen_result = nk.entropy_sample(
+                    cleaned_signal, 
+                    delay=delay, 
+                    dimension=dimension, 
+                    tolerance=tolerance
+                )
                 
-                # entropy_sample также возвращает кортеж (значение, информация)
-                #sampen = float(sampen_result[0]) if isinstance(sampen_result, tuple) else float(sampen_result)
+                sampen = float(sampen_result[0]) if isinstance(sampen_result, tuple) else float(sampen_result)
                 
                 # Добавляем результат
-                #result[f"ЭКГ_{stage}_SampleEntropy"] = sampen
+                result[f"ЭКГ_{stage}_SampleEntropy"] = sampen
                 
-            #except Exception as e:
-                #print(f"Ошибка при расчете Sample Entropy для стадии {stage}: {str(e)}")
-                #result[f"ЭКГ_{stage}_SampleEntropy"] = np.nan
+            except Exception as e:
+                print(f"Ошибка при расчете Sample Entropy для стадии {stage}: {str(e)}")
+                result[f"ЭКГ_{stage}_SampleEntropy"] = np.nan
 
     # Основные параметры ВСР
             param_mapping = {
                 'ЭКГ_ЧСС': 'ECG_Rate_Mean',
-                #'MeanRR': 'HRV_MeanNN',
-                #'MinRR': 'HRV_MinNN',
-                #'MaxRR': 'HRV_MaxNN',
-                #'SDNN': 'HRV_SDNN', 
-                #'SDANN1': 'HRV_SDANN1',
-                #'SDNNI1': 'HRV_SDNNI1',
-                #'RMSSD': 'HRV_RMSSD',
-                #'SDRMSSD': 'HRV_SDRMSSD',
-                #'pNN50': 'HRV_pNN50',
+                'MeanRR': 'HRV_MeanNN',
+                'MinRR': 'HRV_MinNN',
+                'MaxRR': 'HRV_MaxNN',
+                'SDNN': 'HRV_SDNN', 
+                'SDANN1': 'HRV_SDANN1',
+                'SDNNI1': 'HRV_SDNNI1',
+                'RMSSD': 'HRV_RMSSD',
+                'SDRMSSD': 'HRV_SDRMSSD',
+                'pNN50': 'HRV_pNN50',
         
         # Нелинейные параметры
-                #'SD1': 'HRV_SD1',
-                #'SD2': 'HRV_SD2',
-                #'SD1SD2': 'HRV_SD1SD2',
-                #'CSI': 'HRV_CSI',
-                #'CVI': 'HRV_CVI',
-                #'HTI': 'HRV_HTI',
+                'SD1': 'HRV_SD1',
+                'SD2': 'HRV_SD2',
+                'SD1SD2': 'HRV_SD1SD2',
+                'CSI': 'HRV_CSI',
+                'CVI': 'HRV_CVI',
+                'HTI': 'HRV_HTI',
             }
 
             freq_params_mapping = {
-                #'ULF': 'HRV_ULF',
+                'ULF': 'HRV_ULF',
                 'VLF': 'HRV_VLF', 
                 'LF': 'HRV_LF',
                 'HF': 'HRV_HF',
-                #'VHF': 'HRV_VHF',
+                'VHF': 'HRV_VHF',
                 'LFHF': 'HRV_LFHF',
-                #'LnHF': 'HRV_LnHF'
+                'LnHF': 'HRV_LnHF'
             }
 
     # Извлекаем стандартные параметры
@@ -260,14 +259,14 @@ def process_signal(signal, signal_type, name, stage, sampling_rate=SAMPLING_RATE
                 geom_features = {
                     'LFn': lf_power/tp,
                     'HFn': hf_power/tp,
-                    #'Mo': mo,
-                    #'AMo': amo,
-                    #'ВР': force_extract(MxDMn),
-                    #'ИВР': force_extract(amo/MxDMn) if MxDMn > 0 else np.nan,
-                    #'ВПР': force_extract(1/(mo*MxDMn)) if (mo*MxDMn) > 0 else np.nan,
-                    #'ПАПР': force_extract(amo/mo) if mo > 0 else np.nan,
-                    #'ИН': force_extract(amo/(2*MxDMn*mo)) if (MxDMn*mo) > 0 else np.nan,
-                    #'ИЦ': force_extract(ic),
+                    'Mo': mo,
+                    'AMo': amo,
+                    'ВР': force_extract(MxDMn),
+                    'ИВР': force_extract(amo/MxDMn) if MxDMn > 0 else np.nan,
+                    'ВПР': force_extract(1/(mo*MxDMn)) if (mo*MxDMn) > 0 else np.nan,
+                    'ПАПР': force_extract(amo/mo) if mo > 0 else np.nan,
+                    'ИН': force_extract(amo/(2*MxDMn*mo)) if (MxDMn*mo) > 0 else np.nan,
+                    'ИЦ': force_extract(ic),
                 }
         
         # Добавляем все параметры в результат
@@ -347,50 +346,50 @@ def process_signal(signal, signal_type, name, stage, sampling_rate=SAMPLING_RATE
                 return result
         
     # ДОБАВЛЯЕМ РАСЧЕТ INDIVIDUAL ALPHA PEAK FREQUENCY
-            #try:
+            try:
         # Вычисляем спектральную плотность мощности
-                #psd = nk.signal_psd(filtered_eeg, sampling_rate=sampling_rate, show=False)
+                psd = nk.signal_psd(filtered_eeg, sampling_rate=sampling_rate, show=False)
         
-                #if psd is not None and not psd.empty:
+                if psd is not None and not psd.empty:
             # Определяем альфа-диапазон для поиска пика (можно расширить для надежности)
-                    #alpha_min, alpha_max = 7.0, 13.0
+                    alpha_min, alpha_max = 7.0, 13.0
             
             # Фильтруем PSD для альфа-диапазона
-                    #alpha_psd = psd[(psd['Frequency'] >= alpha_min) & (psd['Frequency'] <= alpha_max)]
+                    alpha_psd = psd[(psd['Frequency'] >= alpha_min) & (psd['Frequency'] <= alpha_max)]
             
-                    #if not alpha_psd.empty:
+                    if not alpha_psd.empty:
                         # Находим частоту с максимальной мощностью в альфа-диапазоне
-                        #max_power_idx = alpha_psd['Power'].idxmax()
-                        #iapf = alpha_psd.loc[max_power_idx, 'Frequency']
+                        max_power_idx = alpha_psd['Power'].idxmax()
+                        iapf = alpha_psd.loc[max_power_idx, 'Frequency']
                 
                 # Дополнительная проверка: пик должен быть достаточно выраженным
                 # Вычисляем среднюю мощность в окрестности ±1 Гц от пика
-                        #surround_mask = (psd['Frequency'] >= iapf - 1.0) & (psd['Frequency'] <= iapf + 1.0)
-                        #mean_surround_power = psd[surround_mask]['Power'].mean()
+                        surround_mask = (psd['Frequency'] >= iapf - 1.0) & (psd['Frequency'] <= iapf + 1.0)
+                        mean_surround_power = psd[surround_mask]['Power'].mean()
                 
                 # Проверяем, что пик хотя бы на 15% выше окружающих частот
-                        #peak_power = alpha_psd.loc[max_power_idx, 'Power']
-                        #if peak_power > 1.15 * mean_surround_power:
-                            #result[f"ЭЭГ_{stage}_IAPF"] = force_extract(iapf)
-                            #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = force_extract(peak_power)
-                        #else:
+                        peak_power = alpha_psd.loc[max_power_idx, 'Power']
+                        if peak_power > 1.15 * mean_surround_power:
+                            result[f"ЭЭГ_{stage}_IAPF"] = force_extract(iapf)
+                            result[f"ЭЭГ_{stage}_AlphaPeakPower"] = force_extract(peak_power)
+                        else:
                     # Пик недостаточно выражен
-                            #result[f"ЭЭГ_{stage}_IAPF"] = None
-                            #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
-                    #else:
+                            result[f"ЭЭГ_{stage}_IAPF"] = None
+                            result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+                    else:
                 # Нет данных в альфа-диапазоне
-                        #result[f"ЭЭГ_{stage}_IAPF"] = None
-                        #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+                        result[f"ЭЭГ_{stage}_IAPF"] = None
+                        result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
                 
-                #else:
+                else:
             # Не удалось вычислить PSD
-                    #result[f"ЭЭГ_{stage}_IAPF"] = None
-                    #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+                    result[f"ЭЭГ_{stage}_IAPF"] = None
+                    result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
             
-            #except Exception as e:
-                #print(f"Ошибка при расчете IAPF для стадии {stage}: {str(e)}")
-                #result[f"ЭЭГ_{stage}_IAPF"] = None
-                #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+            except Exception as e:
+                print(f"Ошибка при расчете IAPF для стадии {stage}: {str(e)}")
+                result[f"ЭЭГ_{stage}_IAPF"] = None
+                result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
         
     except Exception as e:
         return None
