@@ -1,0 +1,480 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import neurokit2 as nk
+import os
+from os import listdir, path
+from IPython.display import display
+from tqdm import tqdm
+
+# Настройки
+DATA_PATH = 'C:/Users/khari/OneDrive/Документы/Обработка ВСР/'
+RESULTS_PATH = 'C:/Users/khari/OneDrive/Документы/Результаты ВСР/'
+SAMPLING_RATE = 250
+REQUIRED_STAGES = ["Струп тест фигуры", "Струп тест черные слова", "Струп тест цвет трен",
+    "Этап 1 Офис", "Выбор1", "Струп тест цвет", "Каган тест1",
+    "Этап 2 Собачка", "Выбор2", "Струп тест цвет2", "Каган тест2",
+    "Этап Радостная ситуация Баскет", "Струп тест цвет3", "Каган тест3",
+    "Этап 3 Семейная ссора", "Выбор3", "Струп тест цвет4", "Каган тест4",
+    "Нейтральная ситуация", "ВыборН", "Струп тест цвет5", "Каган тест5",
+    "Этап 4 Метро", "Выбор4", "Струп тест цвет6", "Каган тест6",
+    "Итоговый фон открытые глаза", "Итоговый фон закрытые глаза"]  # ваш список этапов
+
+def get_data_from_reacor_file(file):
+    """Чтение и извлечение данных из файла реактора (только нужные этапы)"""
+    with open(file, 'r', encoding='cp1251') as fd:
+        lines = [line.replace(',', '.') for line in fd.readlines()]
+
+    # Инициализация каналов
+    ecg_channel = ppg_channel = eda_channel = eeg_channel = None
+
+    for i, line in enumerate(lines):
+        if line.startswith('// Информация о треке'):
+            channel_num = int(lines[i+2].split('<')[0].strip())
+            channel_type = lines[i+3].split('<')[0].strip()
+
+            if 'ЭКГ' in channel_type or 'ECG' in channel_type:
+                ecg_channel = channel_num + 1
+            if ('ФПГ' in channel_type or 'PPG' in channel_type) and 'дифференциальный' not in channel_type:
+                ppg_channel = channel_num + 1
+            if 'КГР' in channel_type or 'EDA' in channel_type:
+                eda_channel = channel_num + 1
+            if 'ЭЭГ' in channel_type or 'EEG' in channel_type:
+                eeg_channel = channel_num + 1
+
+    stage_data_ecg, stage_data_ppg, stage_data_eda, stage_data_eeg = {}, {}, {}, {}
+
+    for i in range(len(lines)):
+        if 'Название фрагмента' in lines[i]:
+            name = lines[i].split("<")[0].strip()
+            if name not in REQUIRED_STAGES:
+                continue
+                
+            stage_length = int(lines[i+3].split("<")[0].strip())
+            data_start_index = i+5
+            
+            data_ecg, data_ppg, data_eda, data_eeg = [], [], [], []
+            for j in range(data_start_index, data_start_index + stage_length):
+                data = lines[j].split('\t')
+                
+                if ecg_channel is not None and ecg_channel < len(data):
+                    data_ecg.append(float(data[ecg_channel]))
+                if ppg_channel is not None and ppg_channel < len(data):
+                    data_ppg.append(float(data[ppg_channel]))
+                if eda_channel is not None and eda_channel < len(data):
+                    data_eda.append(float(data[eda_channel]))
+                if eeg_channel is not None and eeg_channel < len(data):
+                    data_eeg.append(float(data[eeg_channel]))
+
+            if ecg_channel is not None:
+                stage_data_ecg[name] = data_ecg
+            if ppg_channel is not None:
+                stage_data_ppg[name] = data_ppg
+            if eda_channel is not None:
+                stage_data_eda[name] = data_eda
+            if eeg_channel is not None:
+                stage_data_eeg[name] = data_eeg
+    
+    return stage_data_ecg, stage_data_ppg, stage_data_eda, stage_data_eeg
+
+def process_signal(signal, signal_type, name, stage, sampling_rate=SAMPLING_RATE):
+    """Обработка сигнала с визуализацией и анализом"""
+    try:
+        result = {}
+        if len(signal) < 100:
+            return None
+
+        def force_extract(value):
+            try:
+                if hasattr(value, 'iloc'):
+                    return float(value.iloc[0])
+                if hasattr(value, 'item'):
+                    return float(value.item())
+                if isinstance(value, (list, tuple, np.ndarray)):
+                    if len(value) > 0:
+                        if isinstance(value[0], (list, tuple, np.ndarray)):
+                            return float(value[0][0])
+                        return float(value[0])
+                    return float('nan')
+                return float(value)
+            except (TypeError, ValueError, IndexError):
+                return float('nan')
+        
+        if signal_type == 'PPG':
+            ppg_processed, info = nk.ppg_process(signal, sampling_rate=sampling_rate)
+            peaks = info['PPG_Peaks']
+            if len(peaks) < 2:
+                return None
+        
+            cleaned = ppg_processed['PPG_Clean']
+            systolic_amplitudes = []
+        
+            for i in range(1, len(peaks)):
+                prev_peak = peaks[i-1]
+                current_peak = peaks[i]
+                trough = cleaned.iloc[prev_peak:current_peak].idxmin()
+                amplitude = cleaned.iloc[current_peak] - cleaned.iloc[trough]
+                systolic_amplitudes.append(amplitude)
+        
+            mean_amplitude = np.mean(systolic_amplitudes) if systolic_amplitudes else np.nan
+            analysis = nk.ppg_analyze(ppg_processed, sampling_rate=sampling_rate)
+        
+            result = {
+                #f"ФПГ_{stage}_ЧСС": force_extract(analysis['PPG_Rate_Mean'].iloc[0]),
+                #f"ФПГ_{stage}_ACB": force_extract(mean_amplitude),
+            }
+            return result
+        
+        elif signal_type == 'ECG':
+            ecg_processed, info = nk.ecg_process(signal, sampling_rate=sampling_rate)
+            analysis = nk.ecg_analyze(ecg_processed, sampling_rate=sampling_rate)
+
+            if analysis is None or analysis.empty:
+                return None
+
+            rpeaks = info['ECG_R_Peaks']
+            if len(rpeaks) < 2:
+                return None
+            
+            hrv_freq = nk.hrv_frequency(peaks=rpeaks, sampling_rate=sampling_rate, normalize=False, psd_method='welch', show=False)
+            
+            #try:
+                # Используем очищенный сигнал ЭКГ для расчета энтропии
+                #cleaned_signal = ecg_processed['ECG_Clean'].values
+                
+                # Определяем оптимальные параметры для sample entropy
+                #delay_result = nk.complexity_delay(cleaned_signal, delay_max=50, method='fraser1986', show=False, silent=True)
+                #delay = int(delay_result[0]) if isinstance(delay_result, tuple) else int(delay_result)
+                
+                #dimension_result = nk.complexity_dimension(cleaned_signal, delay=delay, dimension_max=10, method='afnn', show=False)
+                #dimension = int(dimension_result[0]) if isinstance(dimension_result, tuple) else int(dimension_result)
+                
+                #tolerance_result = nk.complexity_tolerance(cleaned_signal, method='maxApEn', delay=delay, dimension=dimension, show=False)
+                #tolerance = float(tolerance_result[0]) if isinstance(tolerance_result, tuple) else float(tolerance_result)
+                
+                # Вычисляем sample entropy
+                #sampen_result = nk.entropy_sample(
+                #    cleaned_signal, 
+                #    delay=delay, 
+                #    dimension=dimension, 
+                #    tolerance=tolerance
+                #)
+                
+                # entropy_sample также возвращает кортеж (значение, информация)
+                #sampen = float(sampen_result[0]) if isinstance(sampen_result, tuple) else float(sampen_result)
+                
+                # Добавляем результат
+                #result[f"ЭКГ_{stage}_SampleEntropy"] = sampen
+                
+            #except Exception as e:
+                #print(f"Ошибка при расчете Sample Entropy для стадии {stage}: {str(e)}")
+                #result[f"ЭКГ_{stage}_SampleEntropy"] = np.nan
+
+    # Основные параметры ВСР
+            param_mapping = {
+                'ЭКГ_ЧСС': 'ECG_Rate_Mean',
+                #'MeanRR': 'HRV_MeanNN',
+                #'MinRR': 'HRV_MinNN',
+                #'MaxRR': 'HRV_MaxNN',
+                #'SDNN': 'HRV_SDNN', 
+                #'SDANN1': 'HRV_SDANN1',
+                #'SDNNI1': 'HRV_SDNNI1',
+                #'RMSSD': 'HRV_RMSSD',
+                #'SDRMSSD': 'HRV_SDRMSSD',
+                #'pNN50': 'HRV_pNN50',
+        
+        # Нелинейные параметры
+                #'SD1': 'HRV_SD1',
+                #'SD2': 'HRV_SD2',
+                #'SD1SD2': 'HRV_SD1SD2',
+                #'CSI': 'HRV_CSI',
+                #'CVI': 'HRV_CVI',
+                #'HTI': 'HRV_HTI',
+            }
+
+            freq_params_mapping = {
+                #'ULF': 'HRV_ULF',
+                'VLF': 'HRV_VLF', 
+                'LF': 'HRV_LF',
+                'HF': 'HRV_HF',
+                #'VHF': 'HRV_VHF',
+                'LFHF': 'HRV_LFHF',
+                #'LnHF': 'HRV_LnHF'
+            }
+
+    # Извлекаем стандартные параметры
+            for param, hrv_key in param_mapping.items():
+                if hrv_key in analysis:
+                    val = analysis[hrv_key].iloc[0]
+                    result[f"ЭКГ_{stage}_{param}"] = float(val) if not pd.isna(val) else np.nan
+
+            for param, hrv_key in freq_params_mapping.items():
+                if hrv_key in hrv_freq:
+                    val = hrv_freq[hrv_key].iloc[0]
+                    result[f"ЭКГ_{stage}_{param}"] = float(val) if not pd.isna(val) else np.nan
+
+    # Рассчитываем дополнительные параметры
+            rr_intervals = np.diff(rpeaks) / sampling_rate * 1000  # в мс
+    
+            if len(rr_intervals) > 10:
+        # Гистограмма RR-интервалов
+                bin_edges = np.linspace(400, 1300, 19)  # 19 точек создает 18 интервалов
+                hist, bin_edges = np.histogram(rr_intervals, bins=bin_edges, range=(400, 1300))
+        
+                mo = bin_edges[np.argmax(hist)]/1000  # Мода
+                amo = np.max(hist)/len(rr_intervals)*100  # Амплитуда моды
+        
+        # Получаем частотные параметры
+                MxDMn = (analysis.get('HRV_MaxNN', [np.nan])[0] - analysis.get('HRV_MinNN', [np.nan])[0])/1000
+                vlf_power = lf_power = hf_power = np.nan
+                if hrv_key == 'HRV_VLF':
+                    vlf_power = float(val) if not pd.isna(val) else np.nan
+                elif hrv_key == 'HRV_LF':
+                    lf_power = float(val) if not pd.isna(val) else np.nan
+                elif hrv_key == 'HRV_HF':
+                    hf_power = float(val) if not pd.isna(val) else np.nan
+
+                if not np.isnan(vlf_power) and not np.isnan(lf_power) and not np.isnan(hf_power):
+                    tp = vlf_power + lf_power + hf_power
+                else:
+                    tp = np.nan
+    
+                result[f"ЭКГ_{stage}_TP"] = tp
+
+    # Все расчеты используем ТОЛЬКО из hrv_freq данных
+                if not np.isnan(lf_power) and not np.isnan(hf_power) and hf_power > 0:
+                    result[f"ЭКГ_{stage}_LFHF"] = lf_power / hf_power
+                else:
+                    result[f"ЭКГ_{stage}_LFHF"] = np.nan
+
+    # Расчет ИЦ использует данные из hrv_freq
+                if not np.isnan(lf_power) and not np.isnan(vlf_power) and not np.isnan(hf_power) and hf_power > 0:
+                    ic = (lf_power + vlf_power) / hf_power
+                else:
+                    ic = np.nan
+
+                    print(lf_power, hf_power, vlf_power, tp)
+
+        
+        # Геометрические параметры
+                geom_features = {
+                    'LFn': lf_power/tp,
+                    'HFn': hf_power/tp,
+                    #'Mo': mo,
+                    #'AMo': amo,
+                    #'ВР': force_extract(MxDMn),
+                    #'ИВР': force_extract(amo/MxDMn) if MxDMn > 0 else np.nan,
+                    #'ВПР': force_extract(1/(mo*MxDMn)) if (mo*MxDMn) > 0 else np.nan,
+                    #'ПАПР': force_extract(amo/mo) if mo > 0 else np.nan,
+                    #'ИН': force_extract(amo/(2*MxDMn*mo)) if (MxDMn*mo) > 0 else np.nan,
+                    #'ИЦ': force_extract(ic),
+                }
+        
+        # Добавляем все параметры в результат
+                for k, v in geom_features.items():
+                    result[f"ЭКГ_{stage}_{k}"] = v
+
+            return result
+
+        elif signal_type == 'EDA':
+            filtered_eda, info_eda = nk.eda_process(signal, sampling_rate=sampling_rate)
+            analysis_result = nk.eda_analyze(filtered_eda, sampling_rate=sampling_rate)
+            if analysis_result is not None and not analysis_result.empty:
+                eda_features = {
+                    'КГР_Nпиков': 'SCR_Peaks_N',
+                    "КГР_АмплитудаПиков": 'SCR_Peaks_Amplitude_Mean'
+                }
+        
+                for feature_name, column_name in eda_features.items():  # Используем .items() вместо вызова как функции
+                    if column_name in analysis_result.columns:
+                        result[f"КГР_{stage}_{feature_name}"] = force_extract(analysis_result[column_name].iloc[0])
+                    else:
+                        result[f"КГР_{stage}_{feature_name}"] = np.nan
+            else:
+        # Если анализ не удался, все равно добавляем колонки с NaN
+                result[f"КГР_{stage}_КГР_Nпиков"] = np.nan
+                result[f"КГР_{stage}_КГР_АмплитудаПиков"] = np.nan
+    
+            return result
+        
+
+        elif signal_type == 'EEG':
+            try:
+        # Предобработка сигнала
+                filtered_eeg = nk.signal_filter(signal, sampling_rate=sampling_rate, lowcut=0.5, highcut=40)
+
+        # Существующий расчет мощности в полосах
+                power = nk.eeg_power(filtered_eeg, sampling_rate=sampling_rate,
+                        frequency_band=['Beta1', 'Beta2', 'Beta3', 'Alpha'])
+
+                if power is not None and not power.empty:
+            # Вычисляем значения после проверки существования power
+                    beta1 = force_extract(power.get('Beta1', [0])[0]) + force_extract(power.get('Beta2', [0])[0])
+                    beta3 = force_extract(power.get('Beta3', [0])[0])
+                    alpha = force_extract(power.get('Alpha', [0])[0])
+            
+            # Создаем словарь с вычисленными значениями
+                    EEG_features = {
+                        'АльфаМ': alpha,
+                        'Бета1М': beta1,
+                        'Бета2М': beta3
+                    }
+
+            # Добавляем вычисленные значения
+                    for feature_name, value in EEG_features.items():
+                        result[f"ЭЭГ_{stage}_{feature_name}"] = value
+
+            # Расчет индекса возбуждения
+                    beta_sum = beta1 + beta3  # beta1 уже содержит Beta1 + Beta2
+                    result[f"ЭЭГ_{stage}_ИВ"] = force_extract(beta_sum / alpha) if alpha > 0 else np.nan
+            
+                else:
+            # Если power пустой, добавляем NaN значения
+                    result[f"ЭЭГ_{stage}_АльфаМ"] = np.nan
+                    result[f"ЭЭГ_{stage}_Бета1М"] = np.nan
+                    result[f"ЭЭГ_{stage}_Бета2М"] = np.nan
+                    result[f"ЭЭГ_{stage}_ИВ"] = np.nan
+            
+                return result
+        
+            except Exception as e:
+                print(f"Ошибка при обработке ЭЭГ для стадии {stage}: {str(e)}")
+        # Все равно возвращаем результат с NaN значениями, чтобы таблица не была пустой
+                result[f"ЭЭГ_{stage}_АльфаМ"] = np.nan
+                result[f"ЭЭГ_{stage}_Бета1М"] = np.nan
+                result[f"ЭЭГ_{stage}_Бета2М"] = np.nan
+                result[f"ЭЭГ_{stage}_ИВ"] = np.nan
+                return result
+        
+    # ДОБАВЛЯЕМ РАСЧЕТ INDIVIDUAL ALPHA PEAK FREQUENCY
+            #try:
+        # Вычисляем спектральную плотность мощности
+                #psd = nk.signal_psd(filtered_eeg, sampling_rate=sampling_rate, show=False)
+        
+                #if psd is not None and not psd.empty:
+            # Определяем альфа-диапазон для поиска пика (можно расширить для надежности)
+                    #alpha_min, alpha_max = 7.0, 13.0
+            
+            # Фильтруем PSD для альфа-диапазона
+                    #alpha_psd = psd[(psd['Frequency'] >= alpha_min) & (psd['Frequency'] <= alpha_max)]
+            
+                    #if not alpha_psd.empty:
+                        # Находим частоту с максимальной мощностью в альфа-диапазоне
+                        #max_power_idx = alpha_psd['Power'].idxmax()
+                        #iapf = alpha_psd.loc[max_power_idx, 'Frequency']
+                
+                # Дополнительная проверка: пик должен быть достаточно выраженным
+                # Вычисляем среднюю мощность в окрестности ±1 Гц от пика
+                        #surround_mask = (psd['Frequency'] >= iapf - 1.0) & (psd['Frequency'] <= iapf + 1.0)
+                        #mean_surround_power = psd[surround_mask]['Power'].mean()
+                
+                # Проверяем, что пик хотя бы на 15% выше окружающих частот
+                        #peak_power = alpha_psd.loc[max_power_idx, 'Power']
+                        #if peak_power > 1.15 * mean_surround_power:
+                            #result[f"ЭЭГ_{stage}_IAPF"] = force_extract(iapf)
+                            #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = force_extract(peak_power)
+                        #else:
+                    # Пик недостаточно выражен
+                            #result[f"ЭЭГ_{stage}_IAPF"] = None
+                            #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+                    #else:
+                # Нет данных в альфа-диапазоне
+                        #result[f"ЭЭГ_{stage}_IAPF"] = None
+                        #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+                
+                #else:
+            # Не удалось вычислить PSD
+                    #result[f"ЭЭГ_{stage}_IAPF"] = None
+                    #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+            
+            #except Exception as e:
+                #print(f"Ошибка при расчете IAPF для стадии {stage}: {str(e)}")
+                #result[f"ЭЭГ_{stage}_IAPF"] = None
+                #result[f"ЭЭГ_{stage}_AlphaPeakPower"] = None
+        
+    except Exception as e:
+        return None
+
+def analyze_all_subjects(df):
+    """Анализ данных всех субъектов (только для нужных этапов)"""
+    results_ppg, results_ecg, results_eda, results_eeg = {}, {}, {}, {}
+
+    for name in tqdm(df['Имя'].unique(), desc="Обработка испытуемых"):
+        subject_data = df[df['Имя'] == name]
+        subject_results_ppg = {"Имя": name}
+        subject_results_ecg = {"Имя": name}
+        subject_results_eda = {"Имя": name}
+        subject_results_eeg = {"Имя": name}
+
+        valid_stages = [stage for stage in subject_data['Фрагмент'].unique() 
+                       if stage in REQUIRED_STAGES]
+
+        for stage in tqdm(valid_stages, desc=f"Этапы {name}", leave=False):
+            for signal_type in ['PPG', 'ECG', 'EDA', 'EEG']:
+                try:
+                    signal_df = subject_data[(subject_data['Фрагмент'] == stage) & 
+                                           (subject_data['Тип'] == signal_type)]
+                    if not signal_df.empty:
+                        signal = signal_df['Данные'].iloc[0]
+                        analysis_result = process_signal(signal, signal_type, name, stage)
+                        if analysis_result:
+                            if signal_type == 'PPG':
+                                subject_results_ppg.update(analysis_result)
+                            elif signal_type == 'ECG':
+                                subject_results_ecg.update(analysis_result)
+                            elif signal_type == 'EDA':
+                                subject_results_eda.update(analysis_result)
+                            elif signal_type == 'EEG':
+                                subject_results_eeg.update(analysis_result)
+                except Exception:
+                    continue
+
+        results_ppg[name] = subject_results_ppg
+        results_ecg[name] = subject_results_ecg
+        results_eda[name] = subject_results_eda
+        results_eeg[name] = subject_results_eeg
+
+    results_df_ppg = pd.DataFrame.from_dict(results_ppg, orient='index')
+    results_df_ecg = pd.DataFrame.from_dict(results_ecg, orient='index')
+    results_df_eda = pd.DataFrame.from_dict(results_eda, orient='index')
+    results_df_eeg = pd.DataFrame.from_dict(results_eeg, orient='index')
+
+    combined_results = results_df_ppg.merge(results_df_ecg, on='Имя', how='outer')\
+                                    .merge(results_df_eda, on='Имя', how='outer')\
+                                    .merge(results_df_eeg, on='Имя', how='outer')
+    
+    return results_df_ppg, results_df_ecg, results_df_eda, results_df_eeg, combined_results
+
+if __name__ == '__main__':
+    if not os.path.exists(RESULTS_PATH):
+        os.makedirs(RESULTS_PATH)
+
+    raw_files = [f for f in listdir(DATA_PATH) if path.isfile(path.join(DATA_PATH, f)) and f.endswith('.txt')]
+    data_rows = []
+
+    for file in tqdm(raw_files, desc="Чтение файлов"):
+        try:
+            subject_name = path.splitext(file)[0]
+            ecg_data, ppg_data, eda_data, eeg_data = get_data_from_reacor_file(path.join(DATA_PATH, file))
+            
+            all_data = {'ECG': ecg_data, 'PPG': ppg_data, 'EDA': eda_data, 'EEG': eeg_data}
+            
+            for data_type, data_dict in all_data.items():
+                for stage_name, values in data_dict.items():
+                    data_rows.append({
+                        'Имя': subject_name,
+                        'Тип': data_type,
+                        'Фрагмент': stage_name,
+                        'Данные': values
+                    })
+        except Exception:
+            continue
+
+    df = pd.DataFrame(data_rows)
+    results_df_ppg, results_df_ecg, results_df_eda, results_df_eeg, combined_results = analyze_all_subjects(df)
+    
+    results_df_ppg.to_csv(os.path.join(RESULTS_PATH, 'ppg_results.csv'), index=False, sep=',', encoding='utf-8-sig')
+    results_df_ecg.to_csv(os.path.join(RESULTS_PATH, 'ecg_results.csv'), index=False, sep=',', encoding='utf-8-sig')
+    results_df_eda.to_csv(os.path.join(RESULTS_PATH, 'eda_results.csv'), index=False, sep=',', encoding='utf-8-sig')
+    results_df_eeg.to_csv(os.path.join(RESULTS_PATH, 'eeg_results.csv'), index=False, sep=',', encoding='utf-8-sig')
+    combined_results.to_csv(os.path.join(RESULTS_PATH, 'combined_results.csv'), index=False, sep=',', encoding='utf-8-sig')
